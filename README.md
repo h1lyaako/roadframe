@@ -2,7 +2,7 @@
 
 Локальное веб-приложение для поиска возможных столкновений в папке с видеорегистратора. Оно показывает отметки из разных файлов в общем списке и сохраняет выбранный отрывок в MP4. Браузер работает с сервером на этом же компьютере.
 
-[Описание проекта](docs/project-description.md) · [Презентация для защиты (.pptx)](docs/roadframe-defense.pptx)
+[Открыть презентацию (PDF)](docs/roadframe-defense.pdf) · [Презентация в PowerPoint](docs/roadframe-defense.pptx) · [Описание проекта](docs/project-description.md) · [Пять тестовых видео](test-videos/README.md)
 
 ## Зачем нужен проект
 
@@ -16,6 +16,8 @@
 - Поиск на OpenCV с проверкой движения в соседних кадрах и отдельной проверкой перекрытия обзора.
 
 ### Что показала проверка
+
+Файлы из таблицы собраны в папке [`test-videos`](test-videos/README.md). Чтобы повторить проверку, откройте эту папку в приложении.
 
 | Запись | Отметки старой версии, с | Отметки текущей версии, с |
 | --- | --- | --- |
@@ -58,4 +60,4 @@ python -m venv .venv
 
 ## Демонстрационная запись
 
-`static/demo.mp4` и три файла в `static/demo/` содержат первые 60 секунд [зимней поездки в Козе](https://commons.wikimedia.org/wiki/File:Dashcam_video_of_driving_through_Kose_in_December_2021.webm), автор Sillerkiil. Разрешение уменьшено до 960×540, звук удалён, контейнер изменён на MP4. Применяется [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Остальные записи доступны по ссылкам на оригиналы в таблице.
+`static/demo.mp4` и три файла в `static/demo/` содержат первые 60 секунд [зимней поездки в Козе](https://commons.wikimedia.org/wiki/File:Dashcam_video_of_driving_through_Kose_in_December_2021.webm), автор Sillerkiil. Разрешение уменьшено до 960×540, звук удалён, контейнер изменён на MP4. Применяется [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).

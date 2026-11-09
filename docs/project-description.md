@@ -30,3 +30,9 @@
 Приложение, которое помогает найти и сохранить нужный фрагмент архива, инструкция запуска и отчёт с воспроизводимыми замерами.
 
 [Код и инструкция запуска](https://github.com/h1lyaako/roadframe)
+
+## Источники изображений в презентации
+
+- Обложка использует кадр [зимней поездки в Козе](https://commons.wikimedia.org/wiki/File:Dashcam_video_of_driving_through_Kose_in_December_2021.webm) автора Sillerkiil. Кадр обрезан под слайд. [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+- На втором слайде использована [фотография регистратора](https://commons.wikimedia.org/wiki/File:Dashcam_recording_a_road.jpg) автора Ed6767. Фото кадрировано. [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+- На слайдах с интерфейсом и примером проверки использована [запись TeslaCam](https://commons.wikimedia.org/wiki/File:INSANE_Car_Crash_caught_on_TeslaCam-_Kia_Soul_flying_through_air!.webm). Wikimedia Commons помечает запись как общественное достояние.
