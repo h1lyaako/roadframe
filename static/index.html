@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Дорожный кадр</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <div class="window">
+    <header class="heading">
+      <div class="brand">
+        <svg width="29" height="29" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M12 5H5v7m15-7h7v7M5 20v7h7m15-7v7h-7M16 8v4m0 4v3m0 4v2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div><h1>Дорожный кадр</h1><p id="subtitle">Архив регистратора</p></div>
+      </div>
+      <div class="actions">
+        <button id="demo" class="secondary">Пример поездки</button>
+        <button id="upload" class="secondary"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="m10 9 5 3-5 3z"/></svg> Выбрать видео</button>
+        <button id="open-folder" class="primary"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h7l2 2h9v12H3z"/></svg> Открыть папку</button>
+        <input type="file" id="file" accept=".mp4,.mov,.webm,.mkv,.avi" multiple hidden>
+        <input type="file" id="folder" webkitdirectory multiple hidden>
+      </div>
+    </header>
+    <div id="progress-box" class="progress-box" hidden><span id="progress-label"></span><progress id="progress" max="100" aria-label="Ход анализа архива"></progress></div>
+    <p id="notice" class="notice" role="status" hidden></p>
+    <section id="empty" class="empty">
+      <svg width="46" height="46" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5" y="10" width="38" height="28" rx="3"/><path d="m20 17 11 7-11 7z"/></svg>
+      <h2>Откройте папку с регистратора</h2><p>Или перетащите сюда записи в MP4, MOV, WebM, MKV или AVI.</p>
+    </section>
+    <div id="workspace" class="workspace" hidden>
+    <section id="archive" class="archive" aria-label="Записи в архиве" hidden>
+      <div class="archive-head"><h2 id="archive-name">Записи</h2><span id="archive-info"></span></div>
+      <div id="files" class="files"></div>
+      <details id="file-errors" hidden><summary id="error-count"></summary><ul id="error-list"></ul></details>
+    </section>
+      <section class="viewer" aria-label="Просмотр записи">
+        <div class="filebar"><span class="filename" id="filename"></span><span id="file-info"></span></div>
+        <div class="screen"><video id="video" playsinline preload="metadata" aria-label="Запись регистратора"></video></div>
+        <div class="transport">
+          <span class="time" id="clock"></span>
+          <div class="playback">
+          <button id="back" class="icon-button jump" aria-label="Назад на 5 секунд"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10a8 8 0 1 1 1 6m-1-6V4m0 6h6"/><path d="M14 9h-4l-.4 3h3a1.5 1.5 0 0 1 0 3h-3"/></svg></button>
+          <button id="play" class="icon-button" aria-label="Воспроизвести"></button>
+          <button id="forward" class="icon-button jump" aria-label="Вперёд на 5 секунд"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10a8 8 0 1 0-1 6m1-6V4m0 6h-6"/><path d="M14 9h-4l-.4 3h3a1.5 1.5 0 0 1 0 3h-3"/></svg></button>
+          </div><div class="view-actions">
+          <button id="mute" class="icon-button" aria-label="Выключить звук"></button>
+          <button id="full" class="icon-button" aria-label="На весь экран"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5"/></svg></button>
+          </div>
+        </div>
+      </section>
+      <section class="timeline" aria-label="Шкала файла">
+        <div class="timeline-head"><h2>Шкала файла</h2><div class="timeline-legend"><span><i class="range-key"></i> Отрывок</span><span><i class="marker-key"></i> Отметка</span></div></div>
+        <div class="ticks" id="ticks" aria-hidden="true"></div>
+        <div class="film" id="film">
+          <div id="frames" class="frames" aria-hidden="true"></div>
+          <div id="clip-range" class="clip-range" aria-hidden="true"></div>
+          <input id="seek" type="range" min="0" max="1" value="0" step=".05" aria-label="Позиция в записи">
+          <div id="markers" class="markers"></div><div id="needle" class="needle"></div>
+        </div>
+      </section>
+      <aside class="review">
+        <div class="review-head"><h2>Возможные столкновения</h2><span id="count" aria-label="Количество отметок"></span></div>
+        <div id="events" class="events"></div>
+        <div class="export">
+          <h2>Сохранить отрывок</h2>
+          <p id="range-label" class="range-label"></p>
+          <div class="limits">
+            <label>До момента, сек.<input id="before" type="number" min="0" max="60" value="8"></label>
+            <label>После момента, сек.<input id="after" type="number" min="1" max="60" value="12"></label>
+          </div>
+          <button id="export" class="secondary export-button"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 4v12m-5-5 5 5 5-5M4 17v3h16v-3"/></svg> Скачать MP4</button>
+        </div>
+      </aside>
+    </div>
+    </div>
+    <footer><span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> Обработка на компьютере</span><span id="credit" hidden><a href="https://commons.wikimedia.org/wiki/File:Dashcam_video_of_driving_through_Kose_in_December_2021.webm" target="_blank" rel="noopener">Видео Sillerkiil</a>, <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a> · разделено на три файла, без звука</span></footer>
+  </main>
+</body>
+</html>
