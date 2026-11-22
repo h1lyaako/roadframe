@@ -25,8 +25,9 @@ function clock(seconds) {
 }
 
 function preciseTime(seconds) {
-  const tenths = Math.round(seconds * 10);
-  return clock(tenths / 10) + ',' + String(tenths % 10);
+  const hundredths = Math.round(seconds * 100);
+  const fraction = String(hundredths % 100).padStart(2, '0').replace(/0$/, '');
+  return clock(hundredths / 100) + ',' + fraction;
 }
 
 function notify(message, error = false) {
@@ -45,10 +46,10 @@ async function json(response) {
 async function analyzeFile(file, part, index, total) {
   const body = file ? new FormData() : null;
   if (body) body.append('video', file);
-  const query = new URLSearchParams({mode: $('ru-mode').checked ? 'ru' : 'motion'});
+  const query = new URLSearchParams({mode: $('mode').value});
   if (!file) { query.set('demo', '1'); query.set('part', part); }
   const endpoint = '/api/jobs?' + query;
-  const { id } = await json(await fetch(endpoint, { method: 'POST', body }));
+  const { id } = await json(await fetch(endpoint, { method: 'POST', body, headers: $('mode').value === 'codex' ? {'X-Roadframe-Codex':'1'} : {} }));
   while (true) {
     const result = await json(await fetch('/api/jobs/' + id, { cache: 'no-store' }));
     if (result.status === 'error') throw new Error(result.error);
@@ -63,7 +64,7 @@ async function start(files, folderName = '') {
   if (busy) return;
   const demo = !files;
   const pathOf = file => file.webkitRelativePath || file.name;
-  const russianDemo = demo && $('ru-mode').checked;
+  const russianDemo = demo && $('mode').value !== 'motion';
   const inputs = demo ? (russianDemo ? [1, 2] : [1, 2, 3]) : Array.from(files)
     .filter(file => videoName.test(file.name)).sort((a, b) => order.compare(pathOf(a), pathOf(b)));
   if (!inputs.length) return notify('В выбранной папке нет поддерживаемых видео.', true);
@@ -72,7 +73,7 @@ async function start(files, folderName = '') {
     return notify('Архив превышает 20 ГБ. Выберите часть файлов.', true);
   }
   busy = true;
-  $('ru-mode').disabled = true;
+  $('mode').disabled = true;
   $('report').disabled = true;
   $('assessment').hidden = true;
   $('upload').disabled = $('demo').disabled = $('open-folder').disabled = true;
@@ -121,7 +122,7 @@ async function start(files, folderName = '') {
     $('progress-box').hidden = true;
     $('upload').disabled = $('demo').disabled = $('open-folder').disabled = false;
     busy = false;
-    $('ru-mode').disabled = false;
+    $('mode').disabled = false;
     $('report').disabled = false;
   }
 }
@@ -386,27 +387,58 @@ video.onerror = () => { if (job) notify('Не удалось воспроизв�
 icon('play', 'play', 'Воспроизвести');
 icon('mute', 'sound', 'Выключить звук');
 for (const id of ['before', 'after']) $(id).oninput = () => sync();
-$('ru-mode').onchange = () => { $('demo').textContent = $('ru-mode').checked ? 'Пример из России' : 'Пример поездки'; };
+function updateMode() {
+  const mode = $('mode').value;
+  $('demo').textContent = mode === 'motion' ? 'Пример поездки' : 'Пример из России';
+  $('mode-hint').textContent = mode === 'codex'
+    ? 'Кадры отправляются в OpenAI через ваш аккаунт Codex.'
+    : mode === 'ru' ? 'Локальная нейросеть · кадры и PDF' : 'Обработка на компьютере';
+}
+$('mode').onchange = () => {
+  try { localStorage.setItem('roadframe-mode', $('mode').value); } catch {}
+  updateMode();
+};
+let preferredMode = new URLSearchParams(location.search).get('mode');
+if (!preferredMode) {
+  try { preferredMode = localStorage.getItem('roadframe-mode'); } catch {}
+}
+if (['motion','ru','codex'].includes(preferredMode)) $('mode').value = preferredMode;
+updateMode();
 
 function renderAssessment() {
-  $('assessment').hidden = job?.mode !== 'ru';
-  if (job?.mode !== 'ru') return;
+  $('assessment').hidden = !['ru', 'codex'].includes(job?.mode);
+  if (!['ru', 'codex'].includes(job?.mode)) return;
   const event = selected;
-  const lines = event ? [
-    'Интервал для просмотра: ' + event.interval.map(preciseTime).join(' – '),
-    event.participants,
-    event.observation,
-    event.cause && 'Возможная причина: ' + event.cause,
-    event.actor && 'Проверить действия: ' + event.actor,
-    event.rule && 'Возможен п. ' + event.rule + ' ПДД РФ.',
-    event.guide || event.missing,
-    event.plates.length ? 'Номера на двух кадрах: ' + event.plates.join(', ') : 'Номер уверенно прочитать не удалось.',
-  ] : [job.events.length ? 'Выберите отметку, чтобы увидеть разбор.' : 'По просмотренным кадрам модель не выделила эпизод.'];
-  $('assessment-text').replaceChildren(...lines.filter(Boolean).map(line => {
+  const box = $('assessment-text');
+  box.replaceChildren();
+  const add = (parent, text) => {
+    if (!text) return;
     const p = document.createElement('p');
-    p.textContent = line;
-    return p;
-  }));
+    p.textContent = text;
+    parent.append(p);
+  };
+  if (!event) {
+    add(box, job.events.length ? 'Выберите отметку, чтобы увидеть разбор.' :
+      (job.overview?.filter(Boolean).join(' ') || 'По просмотренным кадрам модель не выделила эпизод.'));
+    return;
+  }
+  add(box, event.interval.map(preciseTime).join(' – '));
+  add(box, event.cause || event.observation);
+  if (event.actor) add(box, event.actor);
+  const more = document.createElement('details');
+  const title = document.createElement('summary');
+  title.textContent = 'Кадры и основания по ПДД';
+  more.append(title);
+  add(more, event.participants);
+  if (event.cause) add(more, event.observation);
+  for (const item of event.evidence || []) {
+    if (item.caption) add(more, preciseTime(item.time) + ' · ' + item.caption);
+  }
+  if (event.rule) add(more, 'ПДД РФ, п. ' + event.rule);
+  add(more, event.guide);
+  if (!event.guide || job.mode === 'codex') add(more, event.missing);
+  add(more, event.plates.length ? 'Номера на двух кадрах: ' + event.plates.join(', ') : 'Госномер по двум кадрам не подтверждён.');
+  box.append(more);
 }
 
 $('report').onclick = async () => {

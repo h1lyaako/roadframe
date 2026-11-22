@@ -206,3 +206,9 @@ footer > span:first-child { display: flex; align-items: center; gap: .3rem; }
   .transport { padding-inline: .3rem; }
   .transport .icon-button { width: 2.15rem; }
 }
+
+.analysis-mode select { font: inherit; color: inherit; background: var(--surface, white); border: 1px solid var(--line); border-radius: 6px; padding: .35rem .5rem; }
+.analysis-mode select:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+.assessment details { margin-block: .75rem; font-size: .84rem; }
+.assessment summary { cursor: pointer; color: var(--blue); }

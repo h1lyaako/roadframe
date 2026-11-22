@@ -12,6 +12,7 @@ from flask import Flask, abort, jsonify, request, send_file
 from analysis import analyze, probe
 from vision import review
 from report import make_report
+from codex_review import review_codex
 
 ROOT = Path(__file__).resolve().parent
 DEMO = ROOT / "static" / "demo.mp4"
@@ -51,7 +52,12 @@ def process(job):
     try:
         source = job["source"]
         duration, codec = probe(source)
-        if job["view"]["mode"] == "ru":
+        if job["view"]["mode"] == "codex":
+            result = review_codex(source, duration, job["folder"], lambda phase, value:
+                                  update(job, phase=phase, progress=round(value)))
+            events = result.pop("events")
+            update(job, **result)
+        elif job["view"]["mode"] == "ru":
             events, elapsed = review(source, duration, job["folder"], lambda phase, value:
                                      update(job, phase=phase, progress=round(value)))
             update(job, visionSeconds=elapsed)
@@ -95,12 +101,14 @@ def too_large(_):
 def create_job():
     is_demo = request.args.get("demo") == "1"
     mode = request.args.get("mode", "motion")
-    if mode not in {"ru", "motion"}:
+    if mode not in {"ru", "motion", "codex"}:
         return jsonify(error="Неизвестный режим анализа."), 400
+    if mode == "codex" and request.headers.get("X-Roadframe-Codex") != "1":
+        return jsonify(error="Выберите Codex в приложении, чтобы отправить кадры."), 400
     part = request.args.get("part")
     demo_file = DEMO
-    demo_parts = RU_DEMO if mode == "ru" else DEMO_PARTS
-    if is_demo and mode == "ru" and part is None:
+    demo_parts = RU_DEMO if mode in {"ru","codex"} else DEMO_PARTS
+    if is_demo and mode in {"ru","codex"} and part is None:
         abort(400)
     if is_demo and part is not None:
         if part not in {str(i+1) for i in range(len(demo_parts))}:
@@ -120,7 +128,7 @@ def create_job():
     folder = Path(WORK.name) / key
     source = demo_file if is_demo else folder / ("source" + suffix)
     demo_name = f"Козе-{int(part):02}.mp4" if is_demo and part is not None else "Козе · зимняя поездка.mp4"
-    if is_demo and mode == "ru":
+    if is_demo and mode in {"ru","codex"}:
         demo_name = demo_file.name
     view = {
         "id": key, "status": "working", "phase": "Анализируем движение",
@@ -177,7 +185,7 @@ def report():
         if not isinstance(item,dict) or not isinstance(item.get("id"),str):
             abort(400)
         job = get_job(item["id"])
-        if job["view"]["mode"] != "ru" or job["view"]["status"] != "ready":
+        if job["view"]["mode"] not in {"ru","codex"} or job["view"]["status"] != "ready":
             return jsonify(error="Дождитесь окончания разбора по ПДД РФ."),409
         path = item.get("path",job["view"]["name"])
         if not isinstance(path,str) or len(path)>1024:

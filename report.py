@@ -7,7 +7,15 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, KeepTogether, Table
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Image,
+    KeepTogether,
+    Table,
+    PageBreak,
+)
 
 from pdd import RULES, source
 
@@ -55,19 +63,23 @@ def make_report(records, skipped):
     )
     for name in skipped:
         body.append(paragraph(f"Файл пропущен при обработке: {name}", 10))
-    for path, job in records:
+    for index, (path, job) in enumerate(records):
+        if index and job["view"]["mode"] == "codex":
+            body.append(PageBreak())
         view = job["view"]
         body.extend(
             [
                 Spacer(1, 9),
                 paragraph(path, 16),
                 paragraph(
-                    f'Длительность {view["duration"]:.1f} с · разбор моделью {view["visionSeconds"]:.1f} с',
+                    f'Длительность {view["duration"]:.1f} с · разбор {view["visionSeconds"]:.1f} с · {view.get("model", "Qwen3-VL-4B")}',
                     10,
                 ),
             ]
         )
         if not view["events"]:
+            for summary in view.get("overview", []):
+                body.append(paragraph(summary))
             body.append(
                 paragraph(
                     "На просмотренных кадрах модель не выделила столкновение. Между кадрами обзора проходит одна секунда, поэтому короткий эпизод мог быть пропущен."
@@ -89,7 +101,13 @@ def make_report(records, skipped):
             )
             if event["rule"]:
                 rule = event["rule"]
-                body.append(paragraph(f"ПДД РФ, п. {rule}. " + RULES[rule]))
+                body.append(
+                    paragraph(
+                        f"ПДД РФ, п. {rule}"
+                        if event.get("guide") and view["mode"] == "codex"
+                        else f"ПДД РФ, п. {rule}. " + RULES[rule]
+                    )
+                )
                 body.append(
                     Paragraph(
                         f'<a href="{source(rule)}" color="#0057a8">Открыть текст пункта</a>',
@@ -98,7 +116,7 @@ def make_report(records, skipped):
                 )
             if event.get("guide"):
                 body.append(paragraph(event["guide"]))
-            if event["missing"] and not event.get("guide"):
+            if event["missing"] and (not event.get("guide") or view["mode"] == "codex"):
                 body.append(paragraph("Для проверки. " + event["missing"]))
             body.append(
                 paragraph(
@@ -111,11 +129,19 @@ def make_report(records, skipped):
                 picture = job["folder"] / item["file"]
                 width, height = ImageReader(str(picture)).getSize()
                 pictures.append(Image(str(picture), width=155, height=155 * height / width))
-                captions.append(paragraph(f'{item["time"]:g} с', 9))
+                caption = " · " + item["caption"] if item.get("caption") else ""
+                captions.append(paragraph(f'{item["time"]:g} с{caption}', 9))
             if pictures:
                 body.append(
                     KeepTogether(
-                        [Table([pictures, captions], colWidths=[165] * len(pictures)), Spacer(1, 8)]
+                        [
+                            Table(
+                                [pictures, captions],
+                                colWidths=[165] * len(pictures),
+                                style=[("VALIGN", (0, 0), (-1, -1), "TOP")],
+                            ),
+                            Spacer(1, 8),
+                        ]
                     )
                 )
             if event.get("enlargement"):
@@ -135,7 +161,7 @@ def make_report(records, skipped):
             Spacer(1, 12),
             paragraph("Как читать этот отчёт", 12),
             paragraph(
-                "Версии предложила локальная модель Qwen3-VL-4B. Для юридического вывода "
+                "В отчёте приведена реконструкция по выбранным кадрам. Для юридического вывода "
                 "о виновности нужны все доказательства. Справочник ПДД РФ сверён 22.11.2026. "
                 "Для прошлых лет проверьте редакцию правил на дату происшествия.",
                 9,
