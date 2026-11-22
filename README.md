@@ -4,7 +4,7 @@
 
 [Открыть презентацию (PDF)](docs/roadframe-defense.pdf) · [Презентация в PowerPoint](docs/roadframe-defense.pptx) · [Описание проекта](docs/project-description.md) · [Пять тестовых видео](test-videos/README.md)
 
-[Разобрать запись по ПДД РФ и скачать отчёт с кадрами](docs/ru-review.md) · [Российские записи для демонстрации](test-videos-ru/README.md)
+[Открыть пример разбора ДТП (PDF)](docs/ru-review-example.pdf) · [Запуск нейросети и результаты проверки](docs/ru-review.md) · [Российские записи для демонстрации](test-videos-ru/README.md)
 
 ## Зачем нужен проект
 
