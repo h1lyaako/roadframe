@@ -20,4 +20,4 @@ Get-VerifiedFile "$release/llama-b12628-bin-win-vulkan-x64.zip" "runtime.zip" "d
 Get-VerifiedFile "$weights/Qwen3VL-4B-Instruct-Q4_K_M.gguf" "Qwen3VL-4B-Instruct-Q4_K_M.gguf" "66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a"
 Get-VerifiedFile "$weights/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf" "mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf" "30ba2c7dd3127a4561b6cba9d13d0f711c91bdb38742e2f56d73c8cb596bd06d"
 Expand-Archive -LiteralPath (Join-Path $root "runtime.zip") -DestinationPath (Join-Path $root "runtime") -Force
-Write-Host "Model ready. Start server.py and select the Russian traffic analysis option."
+Write-Host "Model ready. Start server.py and select the local Qwen detector."

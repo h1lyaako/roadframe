@@ -16,7 +16,7 @@
         <div><h1>Дорожный кадр</h1><p id="subtitle">Архив регистратора</p></div>
       </div>
       <div class="actions">
-        <button id="demo" class="secondary">Пример поездки</button>
+        <button id="demo" class="secondary">Пример ДТП</button>
         <button id="upload" class="secondary"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="m10 9 5 3-5 3z"/></svg> Выбрать видео</button>
         <button id="open-folder" class="primary"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h7l2 2h9v12H3z"/></svg> Открыть папку</button>
         <input type="file" id="file" accept=".mp4,.mov,.webm,.mkv,.avi" multiple hidden>
@@ -24,11 +24,11 @@
       </div>
     </header>
     <div class="analysis-mode">
-      <label for="mode">Способ разбора</label>
+      <label for="mode">Способ поиска</label>
       <select id="mode">
         <option value="motion">Поиск движения</option>
-        <option value="ru">Qwen · ПДД РФ</option>
-        <option value="codex">Codex · ПДД РФ</option>
+        <option value="ru">Qwen · на компьютере</option>
+        <option value="codex">Codex · через аккаунт</option>
       </select>
       <span id="mode-hint">Обработка на компьютере</span>
     </div>
@@ -72,11 +72,6 @@
       <aside class="review">
         <div class="review-head"><h2>Возможные столкновения</h2><span id="count" aria-label="Количество отметок"></span></div>
         <div id="events" class="events"></div>
-        <section id="assessment" class="assessment" hidden aria-label="Разбор эпизода">
-          <h2>Разбор по ПДД РФ</h2>
-          <div id="assessment-text"></div>
-          <button id="report" class="secondary export-button">Скачать отчёт по архиву · PDF</button>
-        </section>
         <div class="export">
           <h2>Сохранить отрывок</h2>
           <p id="range-label" class="range-label"></p>
@@ -89,7 +84,7 @@
       </aside>
     </div>
     </div>
-    <footer><span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> <span id="processing-place">Дорожный кадр</span></span><span id="credit" hidden><a href="https://commons.wikimedia.org/wiki/File:Dashcam_video_of_driving_through_Kose_in_December_2021.webm" target="_blank" rel="noopener">Видео Sillerkiil</a>, <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a> · разделено на три файла, без звука</span></footer>
+    <footer><span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> <span id="processing-place">Дорожный кадр</span></span><span id="credit" hidden>Исходники: <a href="https://t.me/russiancrash/7941" target="_blank" rel="noopener">Санкт-Петербург</a> · <a href="https://commons.wikimedia.org/wiki/File:Трёхгорный,_авария_на_перекрёстке_Калинина_и_Островского_2019-02-02.webm" target="_blank" rel="noopener">Трёхгорный</a></span></footer>
   </main>
 </body>
 </html>

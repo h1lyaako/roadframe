@@ -47,7 +47,7 @@ async function analyzeFile(file, part, index, total) {
   const body = file ? new FormData() : null;
   if (body) body.append('video', file);
   const query = new URLSearchParams({mode: $('mode').value});
-  if (!file) { query.set('demo', '1'); query.set('part', part); }
+  if (!file) { query.set('demo', 'collision'); query.set('part', part); }
   const endpoint = '/api/jobs?' + query;
   const { id } = await json(await fetch(endpoint, { method: 'POST', body, headers: $('mode').value === 'codex' ? {'X-Roadframe-Codex':'1'} : {} }));
   while (true) {
@@ -64,8 +64,7 @@ async function start(files, folderName = '') {
   if (busy) return;
   const demo = !files;
   const pathOf = file => file.webkitRelativePath || file.name;
-  const russianDemo = demo && $('mode').value !== 'motion';
-  const inputs = demo ? (russianDemo ? [1, 2] : [1, 2, 3]) : Array.from(files)
+  const inputs = demo ? [1, 2] : Array.from(files)
     .filter(file => videoName.test(file.name)).sort((a, b) => order.compare(pathOf(a), pathOf(b)));
   if (!inputs.length) return notify('В выбранной папке нет поддерживаемых видео.', true);
   if (inputs.length > 100) return notify('В одном архиве можно открыть до 100 видео. Выберите часть файлов.', true);
@@ -74,8 +73,6 @@ async function start(files, folderName = '') {
   }
   busy = true;
   $('mode').disabled = true;
-  $('report').disabled = true;
-  $('assessment').hidden = true;
   $('upload').disabled = $('demo').disabled = $('open-folder').disabled = true;
   $('progress-box').hidden = false;
   notify('');
@@ -92,13 +89,13 @@ async function start(files, folderName = '') {
   $('workspace').classList.remove('has-video');
   $('empty').hidden = true;
   $('archive').hidden = false;
-  $('credit').hidden = !demo || russianDemo;
-  $('archive-name').textContent = demo ? (russianDemo ? 'Записи из России' : 'Зимняя поездка в Козе') : (folderName || 'Выбранные записи');
+  $('credit').hidden = !demo;
+  $('archive-name').textContent = demo ? 'Пример ДТП' : (folderName || 'Выбранные записи');
   $('subtitle').textContent = demo ? 'Демонстрационный архив' : 'Архив регистратора';
   renderArchive();
   try {
     for (const [index, input] of inputs.entries()) {
-      const name = demo ? (russianDemo ? ['Трёхгорный', 'Озёрск'][index] : 'Козе, часть ' + input) : pathOf(input);
+      const name = demo ? ['Санкт-Петербург', 'Трёхгорный'][index] : pathOf(input);
       $('progress-label').textContent = (index + 1) + ' из ' + inputs.length + ' · Читаем ' + name;
       $('progress').value = index / inputs.length * 100;
       try {
@@ -123,7 +120,6 @@ async function start(files, folderName = '') {
     $('upload').disabled = $('demo').disabled = $('open-folder').disabled = false;
     busy = false;
     $('mode').disabled = false;
-    $('report').disabled = false;
   }
 }
 
@@ -179,7 +175,6 @@ function show(result, event = null, autoplay = false) {
   }
   job = result;
   selected = event;
-  renderAssessment();
   const token = ++revision;
   $('workspace').hidden = false;
   $('workspace').classList.add('has-video');
@@ -226,7 +221,7 @@ function renderEvents() {
     button.className = 'event';
     button.setAttribute('aria-pressed', String(event === selected));
     const time = document.createElement('time');
-    time.textContent = clock(record.offset + event.time);
+    time.textContent = preciseTime(record.offset + event.time);
     const description = document.createElement('span');
     description.className = 'event-description';
     const name = document.createElement('strong');
@@ -262,7 +257,6 @@ function renderMarkers() {
 function select(item) {
   selected?.button?.setAttribute('aria-pressed', 'false');
   selected = item;
-  renderAssessment();
   selected?.button?.setAttribute('aria-pressed', 'true');
   video.pause();
   if (item) seek(item.time);
@@ -274,7 +268,6 @@ function seek(seconds, manual = false) {
   if (manual && selected) {
     selected.button.setAttribute('aria-pressed', 'false');
     selected = null;
-    renderAssessment();
   }
   video.currentTime = Math.max(0, Math.min(video.duration, seconds));
   sync(video.currentTime);
@@ -389,10 +382,9 @@ icon('mute', 'sound', 'Выключить звук');
 for (const id of ['before', 'after']) $(id).oninput = () => sync();
 function updateMode() {
   const mode = $('mode').value;
-  $('demo').textContent = mode === 'motion' ? 'Пример поездки' : 'Пример из России';
   $('mode-hint').textContent = mode === 'codex'
     ? 'Кадры отправляются в OpenAI через ваш аккаунт Codex.'
-    : mode === 'ru' ? 'Локальная нейросеть · кадры и PDF' : 'Обработка на компьютере';
+    : mode === 'ru' ? 'Поиск на компьютере' : 'Обработка на компьютере';
 }
 $('mode').onchange = () => {
   try { localStorage.setItem('roadframe-mode', $('mode').value); } catch {}
@@ -405,61 +397,6 @@ if (!preferredMode) {
 if (['motion','ru','codex'].includes(preferredMode)) $('mode').value = preferredMode;
 updateMode();
 
-function renderAssessment() {
-  $('assessment').hidden = !['ru', 'codex'].includes(job?.mode);
-  if (!['ru', 'codex'].includes(job?.mode)) return;
-  const event = selected;
-  const box = $('assessment-text');
-  box.replaceChildren();
-  const add = (parent, text) => {
-    if (!text) return;
-    const p = document.createElement('p');
-    p.textContent = text;
-    parent.append(p);
-  };
-  if (!event) {
-    add(box, job.events.length ? 'Выберите отметку, чтобы увидеть разбор.' :
-      (job.overview?.filter(Boolean).join(' ') || 'По просмотренным кадрам модель не выделила эпизод.'));
-    return;
-  }
-  add(box, event.interval.map(preciseTime).join(' – '));
-  add(box, event.cause || event.observation);
-  if (event.actor) add(box, event.actor);
-  const more = document.createElement('details');
-  const title = document.createElement('summary');
-  title.textContent = 'Кадры и основания по ПДД';
-  more.append(title);
-  add(more, event.participants);
-  if (event.cause) add(more, event.observation);
-  for (const item of event.evidence || []) {
-    if (item.caption) add(more, preciseTime(item.time) + ' · ' + item.caption);
-  }
-  if (event.rule) add(more, 'ПДД РФ, п. ' + event.rule);
-  add(more, event.guide);
-  if (!event.guide || job.mode === 'codex') add(more, event.missing);
-  add(more, event.plates.length ? 'Номера на двух кадрах: ' + event.plates.join(', ') : 'Госномер по двум кадрам не подтверждён.');
-  box.append(more);
-}
-
-$('report').onclick = async () => {
-  if (busy || !archive.length) return;
-  $('report').disabled = true;
-  const token = archive;
-  try {
-    const response = await fetch('/api/report', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({files: archive.map(({id,path}) => ({id,path})), skipped: failures.map(f => f.name)}),
-    });
-    if (!response.ok) await json(response);
-    const url = URL.createObjectURL(await response.blob());
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'Дорожный кадр — разбор архива.pdf';
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-  } catch (error) { notify(error.message, true); }
-  finally { if (token === archive) $('report').disabled = false; }
-};
 $('export').onclick = async () => {
   if (!job || exporting) return;
   exporting = true;
