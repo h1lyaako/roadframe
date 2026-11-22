@@ -10,10 +10,13 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, request, send_file
 
 from analysis import analyze, probe
+from vision import review
+from report import make_report
 
 ROOT = Path(__file__).resolve().parent
 DEMO = ROOT / "static" / "demo.mp4"
 DEMO_PARTS = tuple(ROOT / "static" / "demo" / f"clip-{index:02}.mp4" for index in range(1, 4))
+RU_DEMO = (ROOT / "test-videos-ru" / "01-trekhgorny.webm", ROOT / "test-videos-ru" / "02-ozersk.webm")
 WORK = tempfile.TemporaryDirectory(prefix="roadframe-")
 app = Flask(__name__)
 MAX_VIDEO_BYTES = 1024 ** 3
@@ -48,9 +51,14 @@ def process(job):
     try:
         source = job["source"]
         duration, codec = probe(source)
-        events = analyze(source, duration, lambda fraction: update(
-            job, progress=round(fraction * 95)
-        ))
+        if job["view"]["mode"] == "ru":
+            events, elapsed = review(source, duration, job["folder"], lambda phase, value:
+                                     update(job, phase=phase, progress=round(value)))
+            update(job, visionSeconds=elapsed)
+        else:
+            events = analyze(source, duration, lambda fraction: update(
+                job, progress=round(fraction * 95)
+            ))
         if source.suffix.lower() != ".mp4" or codec != "h264":
             update(job, phase="Готовим видео для просмотра")
             job["preview"] = job["folder"] / "preview.mp4"
@@ -86,12 +94,18 @@ def too_large(_):
 @app.post("/api/jobs")
 def create_job():
     is_demo = request.args.get("demo") == "1"
+    mode = request.args.get("mode", "motion")
+    if mode not in {"ru", "motion"}:
+        return jsonify(error="Неизвестный режим анализа."), 400
     part = request.args.get("part")
     demo_file = DEMO
+    demo_parts = RU_DEMO if mode == "ru" else DEMO_PARTS
+    if is_demo and mode == "ru" and part is None:
+        abort(400)
     if is_demo and part is not None:
-        if part not in {"1", "2", "3"}:
+        if part not in {str(i+1) for i in range(len(demo_parts))}:
             abort(404)
-        demo_file = DEMO_PARTS[int(part) - 1]
+        demo_file = demo_parts[int(part) - 1]
     if not is_demo:
         free = shutil.disk_usage(WORK.name).free
         if free < 1024 ** 3 + (request.content_length or 0) * 2:
@@ -106,10 +120,12 @@ def create_job():
     folder = Path(WORK.name) / key
     source = demo_file if is_demo else folder / ("source" + suffix)
     demo_name = f"Козе-{int(part):02}.mp4" if is_demo and part is not None else "Козе · зимняя поездка.mp4"
+    if is_demo and mode == "ru":
+        demo_name = demo_file.name
     view = {
         "id": key, "status": "working", "phase": "Анализируем движение",
         "progress": 0, "name": demo_name if is_demo else Path(upload.filename).name,
-        "demo": is_demo,
+        "demo": is_demo, "mode": mode,
     }
     job = {"view": view, "source": source, "folder": folder, "export_lock": threading.Lock()}
     with lock:
@@ -144,6 +160,34 @@ def preview(key):
     if job["view"]["status"] != "ready":
         abort(404)
     return send_file(job["preview"], mimetype="video/mp4", conditional=True)
+
+
+@app.post("/api/report")
+def report():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        abort(400)
+    files, skipped = data.get("files"), data.get("skipped", [])
+    if not isinstance(files,list) or not 1 <= len(files) <= 100 or not isinstance(skipped,list) or len(skipped)>100:
+        abort(400)
+    if any(not isinstance(name,str) or len(name)>1024 for name in skipped):
+        abort(400)
+    records = []
+    for item in files:
+        if not isinstance(item,dict) or not isinstance(item.get("id"),str):
+            abort(400)
+        job = get_job(item["id"])
+        if job["view"]["mode"] != "ru" or job["view"]["status"] != "ready":
+            return jsonify(error="Дождитесь окончания разбора по ПДД РФ."),409
+        path = item.get("path",job["view"]["name"])
+        if not isinstance(path,str) or len(path)>1024:
+            abort(400)
+        records.append((path,job))
+    try:
+        result = make_report(records, skipped)
+    except ValueError as error:
+        return jsonify(error=str(error)),422
+    return send_file(result, mimetype="application/pdf", as_attachment=True, download_name="roadframe-report.pdf")
 
 
 @app.get("/api/jobs/<key>/clip")

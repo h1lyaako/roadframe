@@ -23,6 +23,10 @@
         <input type="file" id="folder" webkitdirectory multiple hidden>
       </div>
     </header>
+    <div class="analysis-mode">
+      <label><input id="ru-mode" type="checkbox"> Разобрать записи из России по ПДД РФ</label>
+      <span>Локальная нейросеть · кадры и PDF</span>
+    </div>
     <div id="progress-box" class="progress-box" hidden><span id="progress-label"></span><progress id="progress" max="100" aria-label="Ход анализа архива"></progress></div>
     <p id="notice" class="notice" role="status" hidden></p>
     <section id="empty" class="empty">
@@ -63,6 +67,11 @@
       <aside class="review">
         <div class="review-head"><h2>Возможные столкновения</h2><span id="count" aria-label="Количество отметок"></span></div>
         <div id="events" class="events"></div>
+        <section id="assessment" class="assessment" hidden aria-label="Разбор эпизода">
+          <h2>Разбор по ПДД РФ</h2>
+          <div id="assessment-text"></div>
+          <button id="report" class="secondary export-button">Скачать отчёт по архиву · PDF</button>
+        </section>
         <div class="export">
           <h2>Сохранить отрывок</h2>
           <p id="range-label" class="range-label"></p>
