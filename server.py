@@ -9,7 +9,7 @@ from pathlib import Path
 
 from flask import Flask, abort, jsonify, request, send_file
 
-from analysis import analyze, probe
+from analysis import analyze, video_info
 from vision import review
 from codex_review import review_codex
 
@@ -27,17 +27,21 @@ jobs = {}
 lock = threading.Lock()
 
 
-def transcode(source, target, selection=None):
+def transcode(source, target, selection=None, duration=None):
     args = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y"]
     if selection:
         args += ["-ss", str(selection[0])]
     args += ["-i", str(source)]
     if selection:
         args += ["-t", str(selection[1] - selection[0])]
+        # Chroma subsampling needs even dimensions. Preserve the original picture.
+        args += ["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"]
     else:
-        args += ["-vf", "scale='min(960,iw)':-2"]
+        if duration is not None:
+            args += ["-t", str(duration)]
+        args += ["-vf", "scale='min(960,iw)':-2,pad=ceil(iw/2)*2:ceil(ih/2)*2"]
     args += [
-        "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-threads", "4",
+        "-map", "0:V:0", "-map", "0:a:0?", "-c:v", "libx264", "-threads", "4",
         "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-c:a", "aac",
         "-movflags", "+faststart", str(target),
     ]
@@ -52,7 +56,8 @@ def update(job, **values):
 def process(job):
     try:
         source = job["source"]
-        duration, codec = probe(source)
+        info = video_info(source)
+        duration = info.duration
         if job["view"]["mode"] == "codex":
             result = review_codex(source, duration, job["folder"], lambda phase, value:
                                   update(job, phase=phase, progress=round(value)))
@@ -66,10 +71,10 @@ def process(job):
             events = analyze(source, duration, lambda fraction: update(
                 job, progress=round(fraction * 95)
             ))
-        if source.suffix.lower() != ".mp4" or codec != "h264":
+        if source.suffix.lower() != ".mp4" or not info.browser_ready:
             update(job, phase="Готовим видео для просмотра")
             job["preview"] = job["folder"] / "preview.mp4"
-            transcode(source, job["preview"])
+            transcode(source, job["preview"], duration=duration)
         else:
             job["preview"] = source
         update(job, status="ready", progress=100, duration=duration, events=events)

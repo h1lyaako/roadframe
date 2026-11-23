@@ -1,25 +1,76 @@
 """Temporal collision candidates from dashcam video."""
 import json
+import math
 import subprocess
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
+from encounters import roadside_events
 
 WIDTH, HEIGHT, FPS = 256, 144, 5
 MAX_DURATION = 3600
 cv2.setNumThreads(2)
 
 
-def probe(path):
-    output = subprocess.check_output([
-        "ffprobe", "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "stream=codec_name:format=duration", "-of", "json", str(path)
-    ], timeout=20, stderr=subprocess.DEVNULL)
+@dataclass(frozen=True)
+class VideoInfo:
+    duration: float
+    codec: str
+    browser_ready: bool
+
+
+def video_info(path):
+    try:
+        output = subprocess.check_output([
+            "ffprobe", "-v", "error", "-show_entries",
+            "stream=codec_type,codec_name,pix_fmt,duration,start_time:stream_disposition=attached_pic:"
+            "stream_tags=DURATION:format=duration",
+            "-of", "json", str(path)
+        ], timeout=20, stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError as exc:
+        raise ValueError("Не удалось прочитать видеофайл.") from exc
     data = json.loads(output)
-    duration = float(data["format"]["duration"])
-    if not data.get("streams") or not 1 <= duration <= MAX_DURATION:
+    streams = data.get("streams", [])
+    videos = [s for s in streams if s["codec_type"] == "video" and not s["disposition"]["attached_pic"]]
+    if not videos:
+        raise ValueError("В файле нет видеодорожки.")
+    video = videos[0]
+    container = float(data["format"].get("duration", 0))
+    if video.get("duration"):
+        duration = float(video["duration"])
+    elif tag := video.get("tags", {}).get("DURATION"):
+        h, m, s = map(float, tag.split(":"))
+        duration = h * 3600 + m * 60 + s - float(video.get("start_time", 0))
+    elif len(streams) > 1 or not container:
+        # Some muxers only store a container duration. A second track can outlast the first.
+        packets = subprocess.check_output([
+            "ffprobe", "-v", "error", "-select_streams", "V:0", "-show_entries",
+            "packet=pts_time,duration_time", "-of", "compact=p=0:nk=0", str(path)
+        ], timeout=90, stderr=subprocess.DEVNULL)
+        first, last = math.inf, -math.inf
+        for line in packets.decode("ascii").splitlines():
+            values = dict(pair.split("=", 1) for pair in line.split("|") if "=" in pair)
+            if values.get("pts_time", "N/A") == "N/A":
+                continue
+            pts = float(values["pts_time"])
+            length = values.get("duration_time", "N/A")
+            first, last = min(first, pts), max(last, pts + (0 if length == "N/A" else float(length)))
+        duration = last - first
+    else:
+        duration = container
+    if not 1 <= duration <= MAX_DURATION:
         raise ValueError("Нужна видеозапись длительностью от секунды до часа.")
-    return duration, data["streams"][0]["codec_name"]
+    browser_ready = (len(videos) == 1 and video["codec_name"] == "h264"
+                     and video.get("pix_fmt") in {"yuv420p", "yuvj420p"}
+                     and abs(container - duration) < 0.1
+                     and all(s["codec_name"] in {"aac", "mp3"} for s in streams if s["codec_type"] == "audio"))
+    return VideoInfo(duration, video["codec_name"], browser_ready)
+
+
+def probe(path):
+    info = video_info(path)
+    return info.duration, info.codec
 
 
 def frame_signals(previous, current, last_motion):
@@ -54,7 +105,7 @@ def frame_signals(previous, current, last_motion):
 def decoded_frames(path, fps):
     command = [
         "ffmpeg", "-nostdin", "-v", "error", "-threads", "2", "-i", str(path),
-        "-an", "-sn", "-vf", f"fps={fps},scale={WIDTH}:{HEIGHT},format=gray",
+        "-map", "0:V:0", "-an", "-sn", "-vf", f"fps={fps},scale={WIDTH}:{HEIGHT},format=gray",
         "-threads", "1", "-f", "rawvideo", "pipe:1"
     ]
     with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as decoder:
@@ -106,6 +157,10 @@ ROAD = (slice(30, 126), slice(32, 224))
 GRID_Y, GRID_X = np.mgrid[:HEIGHT:4, :WIDTH:4].astype(np.float32)
 GRID_POINTS = np.column_stack((GRID_X.ravel(), GRID_Y.ravel()))
 ROAD_X, ROAD_Y = np.meshgrid(np.arange(32, 224, dtype=np.float32), np.arange(30, 126, dtype=np.float32))
+# Directions from the image centre to the centres of the 6 x 12 road cells.
+CELL_X, CELL_Y = np.meshgrid(np.arange(40, 224, 16) - WIDTH / 2, np.arange(38, 126, 16) - HEIGHT / 2)
+CELL_RAYS = np.stack((CELL_X, CELL_Y), axis=-1)
+CELL_RAYS = CELL_RAYS / np.linalg.norm(CELL_RAYS, axis=-1, keepdims=True)
 
 
 def motion_fields(path, duration, update=lambda fraction: None):
@@ -216,6 +271,28 @@ def collision_candidates(fields, camera_jerks, background_motion, texture):
     for group in groups:
         if len(group) < 2 or not np.any(np.diff(group) == 1):
             continue
+        # A car crossing several grid cells creates a large impulse at each cell edge
+        # even at constant velocity. Test whether the strongest motion stays parallel.
+        peak = int(group[np.argmax(score[group])])
+        window = fields[max(0, peak - 4):peak + 5]
+        lengths = np.linalg.norm(window, axis=-1)
+        strong = lengths >= max(2.0, np.quantile(lengths, .90))
+        moving = window[strong]
+        jerk = np.max(camera_jerks[group])
+        if len(moving) and jerk < 3:
+            alignment = np.linalg.norm(moving.sum(axis=0)) / np.linalg.norm(moving, axis=1).sum()
+            if alignment > .985:
+                continue
+            # Forward travel moves scenery outwards on both sides. A nearby
+            # wall or tree can also dominate the outer columns on just one side.
+            if jerk < 1:
+                unit = moving / lengths[strong][:, None]
+                rays = np.broadcast_to(CELL_RAYS, window.shape)[strong]
+                outward = (unit * rays).sum(axis=1) > np.cos(np.pi / 4)
+                both_sides = all((outward & side).mean() >= .1 for side in (rays[:, 0] < 0, rays[:, 0] > 0))
+                edge = np.broadcast_to(np.abs(CELL_X) > WIDTH / 5, strong.shape)[strong]
+                if outward.mean() >= .8 and (both_sides or (edge & outward).mean() >= .75):
+                    continue
         onset = int(group[np.flatnonzero(np.diff(group) == 1)[0]])
         quiet_limit = max(2.5, baseline, threshold * .28)
         quiet = 0
@@ -247,4 +324,13 @@ def collision_candidates(fields, camera_jerks, background_motion, texture):
 
 
 def analyze(path, duration, update=lambda fraction: None):
-    return collision_candidates(*motion_fields(path, duration, update))
+    fields = motion_fields(path, duration, lambda fraction: update(.8 * fraction))
+    events = collision_candidates(*fields)
+    # A genuinely fixed frame permits tracking vehicles against a stable background.
+    # A stopped dashcam with engine vibration usually exceeds this noise floor.
+    if np.quantile(fields[2], .75) < .05:
+        for candidate in roadside_events(path, duration, lambda fraction: update(.8 + .2 * fraction)):
+            if all(abs(candidate["time"] - e["time"]) >= 2 for e in events):
+                events.append(candidate)
+    update(1)
+    return sorted(events, key=lambda event: event["time"])

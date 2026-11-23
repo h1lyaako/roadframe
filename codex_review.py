@@ -12,8 +12,9 @@ import time
 
 import cv2
 
-from encounters import encounters
-from vision import crop_scene, persistent_change, samples, sheet
+from encounters import encounters, persistent_change
+from video_frames import samples
+from vision import crop_scene, sheet
 
 NUMBER = {"type": "number"}
 

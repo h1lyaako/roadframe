@@ -15,7 +15,8 @@ import cv2
 import numpy as np
 
 from analysis import analyze
-from encounters import encounters
+from encounters import encounters, persistent_change
+from video_frames import crop_region, samples
 
 MODEL = "roadframe-local"
 PORT = int(os.environ.get("ROADFRAME_MODEL_PORT", "18068"))
@@ -161,43 +162,6 @@ def ask(image, prompt, fields, max_tokens):
         ) from error
 
 
-def samples(path, start, span, fps, width, height):
-    """Decode sequentially within a window. Labels indicate sample times, not camera clock."""
-    # round=up chooses the source frame at or before the requested instant.
-    vf = (
-        f"fps={fps}:round=up:start_time=0,scale={width}:{height}:"
-        f"force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"
-    )
-    cmd = [
-        "ffmpeg",
-        "-nostdin",
-        "-v",
-        "error",
-        "-ss",
-        f"{start:.3f}",
-        "-threads",
-        "2",
-        "-i",
-        str(path),
-        "-t",
-        f"{span:.3f}",
-        "-an",
-        "-sn",
-        "-vf",
-        vf,
-        "-pix_fmt",
-        "bgr24",
-        "-threads",
-        "1",
-        "-f",
-        "rawvideo",
-        "pipe:1",
-    ]
-    data = subprocess.check_output(cmd, timeout=120, stderr=subprocess.DEVNULL)
-    images = np.frombuffer(data, np.uint8).reshape(-1, height, width, 3)
-    return [(round(start + i / fps, 3), img) for i, img in enumerate(images) if i / fps < span]
-
-
 def sheet(frames, width=360):
     height = width * 9 // 16
     cols = min(4, len(frames))
@@ -269,34 +233,7 @@ OUTCOMES = ["ordinary pass", "uncertain overlap", "impact changes motion"]
 
 
 def crop_scene(frames, region):
-    if region is None:
-        return road_view(frames)
-    x, y, size = region
-    left = min(1 - size, max(0, x - size / 2))
-    top = min(1 - size, max(0, y - size / 2))
-    h, w = frames[0][1].shape[:2]
-    return [
-        (t, im[int(top * h) : int((top + size) * h), int(left * w) : int((left + size) * w)])
-        for t, im in frames
-    ]
-
-
-def persistent_change(path, duration, anchor, region):
-    """Test whether a new object or debris remains after a fixed-camera encounter."""
-    start = max(0, anchor - 6)
-    frames = samples(path, start, min(duration - start, anchor + 7 - start), 2, 448, 252)
-    x, y, size = region
-    patch = crop_scene(frames, (x, y, min(1, size * 1.45))) if frames else []
-    before = [cv2.cvtColor(im, cv2.COLOR_BGR2GRAY) for t, im in patch if t < anchor - 0.65]
-    after = [cv2.cvtColor(im, cv2.COLOR_BGR2GRAY) for t, im in patch if t > anchor + 1.5]
-    if min(len(before), len(after)) < 3:
-        return False
-    low1, high1 = np.quantile(before, [0.2, 0.8], axis=0)
-    low2, high2 = np.quantile(after, [0.15, 0.85], axis=0)
-    changed = (np.maximum(low1 - high2, low2 - high1) > 20).astype(np.uint8)
-    joined = cv2.morphologyEx(changed, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
-    _, _, stats, _ = cv2.connectedComponentsWithStats(joined)
-    return changed.mean() >= 0.007 and np.max(stats[1:, 4], initial=0) >= 0.004 * changed.size
+    return road_view(frames) if region is None else crop_region(frames, region)
 
 
 def review_candidate(path, duration, anchor, region):
@@ -317,8 +254,12 @@ def review_candidate(path, duration, anchor, region):
     if check["outcome"] != "impact changes motion" or index < 0:
         return None
     observed = near[index][0]
+    if region is not None and round(abs(observed - anchor), 3) > 1:
+        return None
     first, last = sorted([observed, anchor] if region is not None else [observed, observed])
-    timepoint = round((first + last) / 2, 2)
+    # On a fixed camera the track intersection refines the half-second visual
+    # sample. The model checks that the vehicles really change motion there.
+    timepoint = round(anchor if region is not None else observed, 2)
     return dict(
         time=timepoint,
         signal="Вероятное столкновение",
@@ -367,7 +308,7 @@ def review(path, duration, progress):
         )
         proposals = [(t, None) for t in motion_times if start <= t < start + 16]
         proposals.extend((frames[i - 1][0], None) for i in sorted(set(scan["frames"])))
-        for score, t, (x, y), size in (encounters(dense)[:4] if view != "dashboard" else []):
+        for score, t, (x, y), size in (encounters(dense, vehicle_tracks=True) if view != "dashboard" else []):
             if score >= 0.12 and 0.06 < x < 0.94 and 0.10 < y < 0.90:
                 proposals.append((t, (x, y, min(0.40, max(0.26, size * 0.7)))))
         for anchor, region in proposals:
