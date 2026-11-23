@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from encounters import roadside_events
 from impact_audio import impact_sounds
+from night_motion import edited_zoom, night_events
 
 WIDTH, HEIGHT, FPS = 256, 144, 5
 MAX_DURATION = 3600
@@ -19,6 +20,7 @@ class VideoInfo:
     duration: float
     codec: str
     browser_ready: bool
+    native_mime: str | None = None
 
 
 def video_info(path):
@@ -26,7 +28,7 @@ def video_info(path):
         output = subprocess.check_output([
             "ffprobe", "-v", "error", "-show_entries",
             "stream=codec_type,codec_name,pix_fmt,duration,start_time:stream_disposition=attached_pic:"
-            "stream_tags=DURATION:format=duration",
+            "stream_tags=DURATION:format=duration,format_name",
             "-of", "json", str(path)
         ], timeout=20, stderr=subprocess.DEVNULL)
     except subprocess.CalledProcessError as exc:
@@ -66,7 +68,13 @@ def video_info(path):
                      and video.get("pix_fmt") in {"yuv420p", "yuvj420p"}
                      and abs(container - duration) < 0.1
                      and all(s["codec_name"] in {"aac", "mp3"} for s in streams if s["codec_type"] == "audio"))
-    return VideoInfo(duration, video["codec_name"], browser_ready)
+    formats = set(data["format"].get("format_name", "").split(","))
+    mime = "video/mp4" if browser_ready and "mp4" in formats else None
+    if ("webm" in formats and len(videos) == 1 and video["codec_name"] in {"vp8", "vp9", "av1"}
+            and abs(container - duration) < .1
+            and all(s["codec_name"] in {"opus", "vorbis"} for s in streams if s["codec_type"] == "audio")):
+        mime = "video/webm"
+    return VideoInfo(duration, video["codec_name"], browser_ready, mime)
 
 
 def probe(path):
@@ -358,6 +366,8 @@ def audiovisual_candidates(fields, background_motion, times):
 def analyze(path, duration, update=lambda fraction: None):
     fields = motion_fields(path, duration, lambda fraction: update(.8 * fraction))
     events = collision_candidates(*fields)
+    # An editorial zoom changes the geometry of the entire road at once.
+    events = [e for e in events if not edited_zoom(path, e["time"], duration)]
     # A genuinely fixed frame permits tracking vehicles against a stable background.
     # A stopped dashcam with engine vibration usually exceeds this noise floor.
     if np.quantile(fields[2], .75) < .05:
@@ -365,6 +375,10 @@ def analyze(path, duration, update=lambda fraction: None):
             if all(abs(candidate["time"] - e["time"]) >= 2 for e in events):
                 events.append(candidate)
     update(.95)
+    if np.quantile(fields[3][:, 1], .2) < 65:
+        for candidate in night_events(path, 0, duration):
+            if all(abs(candidate["time"] - e["time"]) >= 2 for e in events):
+                events.append(candidate)
     for candidate in audiovisual_candidates(fields[0], fields[2], impact_sounds(path, duration)):
         if all(abs(candidate["time"] - event["time"]) >= 2 for event in events):
             events.append(candidate)

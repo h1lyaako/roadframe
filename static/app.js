@@ -9,6 +9,7 @@ const icons = {
 let job, selected = null, busy = false, revision = 0, exporting = false;
 let archive = [], failures = [], manualTime = null, previewing = false;
 let userNavigated = false, archiveRun = 0, imageQueue = Promise.resolve();
+let hlsPlayer, hlsLibrary;
 const videoName = /\.(mp4|mov|webm|mkv|avi)$/i;
 const order = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' });
 
@@ -45,12 +46,13 @@ async function json(response) {
 }
 
 async function analyzeFile(file, part, index, total) {
-  const body = file ? new FormData() : null;
-  if (body) body.append('video', file);
   const query = new URLSearchParams({mode: $('mode').value});
   if (!file) { query.set('demo', 'collision'); query.set('part', part); }
+  else query.set('name', file.name);
   const endpoint = '/api/jobs?' + query;
-  const { id } = await json(await fetch(endpoint, { method: 'POST', body, headers: $('mode').value === 'codex' ? {'X-Roadframe-Codex':'1'} : {} }));
+  const headers = $('mode').value === 'codex' ? {'X-Roadframe-Codex':'1'} : {};
+  if (file) headers['Content-Type'] = 'application/octet-stream';
+  const { id } = await json(await fetch(endpoint, {method: 'POST', body: file, headers}));
   while (true) {
     const result = await json(await fetch('/api/jobs/' + id, { cache: 'no-store' }));
     if (result.status === 'error') throw new Error(result.error);
@@ -87,6 +89,8 @@ async function start(files, folderName = '') {
   job = null;
   selected = null;
   revision++;
+  hlsPlayer?.destroy();
+  hlsPlayer = null;
   video.pause();
   video.removeAttribute('src');
   video.load();
@@ -197,6 +201,13 @@ function show(result, event = null) {
   $('filename').textContent = job.path;
   $('filename').title = job.path;
   $('file-info').textContent = 'Длительность ' + preciseTime(job.duration);
+  const scan = job.scan;
+  $('scan-note').hidden = !scan;
+  if (scan) {
+    const detail = scan.windows.reduce((sum, [a, b]) => sum + b - a, 0);
+    const overview = scan.keyframes ? 'Локальный обзор всей записи.' : 'Проверен индекс файла. Опорные кадры недоступны.';
+    $('scan-note').textContent = overview + ' Детально проверено ' + Math.round(detail) + ' с из ' + clock(job.duration);
+  }
   $('seek').max = job.duration;
   $('seek').value = 0;
   $('ticks').replaceChildren(...Array.from({ length: 5 }, (_, index) => {
@@ -215,8 +226,27 @@ function show(result, event = null) {
     else if (selected) seek(selected.time);
     else sync();
   };
-  video.src = url;
-  thumbnails(url, job.duration, token);
+  hlsPlayer?.destroy();
+  hlsPlayer = null;
+  if (job.previewType === 'hls' && !video.canPlayType('application/vnd.apple.mpegurl')) {
+    if (!hlsLibrary) hlsLibrary = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/static/vendor/hls.light.min.js';
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.append(script);
+    });
+    video.removeAttribute('src');
+    video.load();
+    hlsLibrary.then(() => {
+      if (token !== revision) return;
+      if (!Hls.isSupported()) throw new Error();
+      hlsPlayer = new Hls({startPosition: event?.time ?? 0, maxBufferLength: 12});
+      hlsPlayer.loadSource(url);
+      hlsPlayer.attachMedia(video);
+    }).catch(() => { if (token === revision) notify('Браузер не поддерживает просмотр этого формата.', true); });
+  } else video.src = url;
+  thumbnails(url, job.duration, token, job.previewType === 'hls');
   renderClip();
   sync(event?.time ?? 0);
 }
@@ -361,9 +391,19 @@ function mediaEvent(element, type, action) {
   });
 }
 
-async function thumbnails(url, duration, token) {
+async function thumbnails(url, duration, token, segmented) {
   const film = $('frames');
   film.replaceChildren();
+  if (segmented) {
+    for (let i = 0; i < 7 && token === revision; i++) {
+      const image = new Image();
+      image.alt = '';
+      image.src = url.replace(/\/video$/, '/still?at=') + (duration * (i + .5) / 7).toFixed(3);
+      try { await image.decode(); } catch { continue; }
+      if (token === revision) film.append(image);
+    }
+    return;
+  }
   const reader = document.createElement('video');
   reader.muted = true;
   reader.preload = 'auto';
@@ -388,6 +428,13 @@ async function thumbnails(url, duration, token) {
 
 async function eventImages(record, run) {
   if (run !== archiveRun) return;
+  if (record.previewType === 'hls') {
+    for (const event of record.events) {
+      event.still = '/api/jobs/' + record.id + '/still?at=' + event.time;
+      if (event.image) event.image.src = event.still;
+    }
+    return;
+  }
   const reader = document.createElement('video');
   reader.muted = true;
   try {
@@ -525,8 +572,8 @@ for (const id of ['before', 'after']) $(id).oninput = () => {
 function updateMode() {
   const mode = $('mode').value;
   $('mode-hint').textContent = mode === 'codex'
-    ? 'Кадры отправляются в OpenAI через ваш аккаунт Codex.'
-    : mode === 'ru' ? 'Поиск на компьютере' : 'Обработка на компьютере';
+    ? 'Кадры коротких видео отправляются в OpenAI. От 2 мин или 100 МиБ работает локальный обзор.'
+    : mode === 'ru' ? 'Qwen проверяет короткие видео. От 2 мин или 100 МиБ работает локальный обзор.' : 'Обработка на компьютере';
 }
 $('mode').onchange = () => {
   try { localStorage.setItem('roadframe-mode', $('mode').value); } catch {}
