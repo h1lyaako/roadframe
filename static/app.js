@@ -7,7 +7,8 @@ const icons = {
   muted: '<path d="M4 10v4h4l5 4V6l-5 4zm12 0 4 4m0-4-4 4"/>',
 };
 let job, selected = null, busy = false, revision = 0, exporting = false;
-let archive = [], failures = [], duration = 0;
+let archive = [], failures = [], manualTime = null, previewing = false;
+let userNavigated = false, archiveRun = 0, imageQueue = Promise.resolve();
 const videoName = /\.(mp4|mov|webm|mkv|avi)$/i;
 const order = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' });
 
@@ -26,7 +27,7 @@ function clock(seconds) {
 
 function preciseTime(seconds) {
   const hundredths = Math.round(seconds * 100);
-  const fraction = String(hundredths % 100).padStart(2, '0').replace(/0$/, '');
+  const fraction = String(hundredths % 100).padStart(2, '0');
   return clock(hundredths / 100) + ',' + fraction;
 }
 
@@ -54,7 +55,7 @@ async function analyzeFile(file, part, index, total) {
     const result = await json(await fetch('/api/jobs/' + id, { cache: 'no-store' }));
     if (result.status === 'error') throw new Error(result.error);
     if (result.status === 'ready') return result;
-    $('progress-label').textContent = (index + 1) + ' из ' + total + ' · ' + result.phase;
+    $('progress-label').textContent = (index + 1) + ' из ' + total + ' · ' + (file?.name || result.name) + ' · ' + result.phase;
     $('progress').value = (index + result.progress / 100) / total * 100;
     await new Promise(resolve => setTimeout(resolve, 450));
   }
@@ -78,7 +79,11 @@ async function start(files, folderName = '') {
   notify('');
   archive = [];
   failures = [];
-  duration = 0;
+  const run = ++archiveRun;
+  imageQueue = Promise.resolve();
+  manualTime = null;
+  previewing = false;
+  userNavigated = false;
   job = null;
   selected = null;
   revision++;
@@ -90,9 +95,13 @@ async function start(files, folderName = '') {
   $('empty').hidden = true;
   $('archive').hidden = false;
   $('credit').hidden = !demo;
-  $('archive-name').textContent = demo ? 'Пример ДТП' : (folderName || 'Выбранные записи');
-  $('subtitle').textContent = demo ? 'Демонстрационный архив' : 'Архив регистратора';
+  $('subtitle').textContent = demo ? 'Пример ДТП' : (folderName || 'Выбранные записи');
+  switchTab('events');
   renderArchive();
+  renderEvents();
+  const started = performance.now();
+  $('elapsed').textContent = '00:00';
+  const timer = setInterval(() => { $('elapsed').textContent = clock((performance.now() - started) / 1000); }, 1000);
   try {
     for (const [index, input] of inputs.entries()) {
       const name = demo ? ['Санкт-Петербург', 'Трёхгорный'][index] : pathOf(input);
@@ -102,10 +111,12 @@ async function start(files, folderName = '') {
         if (!demo && input.size > 1024 ** 3) throw new Error('Файл больше 1 ГБ.');
         const result = await analyzeFile(demo ? null : input, input, index, inputs.length);
         result.path = demo ? result.name : (folderName ? name.slice(folderName.length + 1) : name);
-        result.offset = duration;
-        duration += result.duration;
+        result.events.sort((a, b) => a.time - b.time);
         archive.push(result);
-        if (!job) show(result, result.events[0]);
+        if (!job || (!userNavigated && !selected && result.events.length)) show(result, result.events[0]);
+        if (result.events.length) {
+          imageQueue = imageQueue.then(() => eventImages(result, run));
+        }
       } catch (error) {
         failures.push({ name, message: error.message });
       }
@@ -116,25 +127,31 @@ async function start(files, folderName = '') {
       notify('Не удалось открыть ни одной записи. Подробности в списке файлов.', true);
     }
   } finally {
+    clearInterval(timer);
     $('progress-box').hidden = true;
     $('upload').disabled = $('demo').disabled = $('open-folder').disabled = false;
     busy = false;
+    renderEvents();
     $('mode').disabled = false;
   }
 }
 
 function renderArchive() {
-  $('archive-info').textContent = archive.length + ' ' + fileWord(archive.length) + ' · ' + clock(duration);
+  $('archive-info').textContent = 'С отметками: ' + archive.filter(record => record.events.length).length + ' из ' + archive.length + ' видео';
+  $('file-count').textContent = archive.length;
   $('files').replaceChildren(...archive.map(record => {
     const button = document.createElement('button');
     button.className = 'file-segment';
     button.setAttribute('aria-pressed', String(record === job));
     button.title = record.path;
-    button.onclick = () => show(record);
+    button.onclick = () => {
+      userNavigated = true;
+      show(record, selected && job === record ? selected : record.events[0]);
+    };
     const label = document.createElement('strong');
     label.textContent = record.path;
     const position = document.createElement('span');
-    position.textContent = clock(record.offset) + ' – ' + clock(record.offset + record.duration);
+    position.textContent = clock(record.duration) + ' · ' + (record.events.length ? 'Отметок: ' + record.events.length : 'Без отметок');
     const icon = document.createElement('span');
     icon.className = 'file-icon';
     icon.setAttribute('aria-hidden', 'true');
@@ -143,13 +160,6 @@ function renderArchive() {
     copy.className = 'file-copy';
     copy.append(label, position);
     button.append(icon, copy);
-    if (record.events.length) {
-      const count = document.createElement('span');
-      count.className = 'file-count';
-      count.setAttribute('aria-label', 'Отметок: ' + record.events.length);
-      count.textContent = record.events.length;
-      button.append(count);
-    }
     return button;
   }));
   $('file-errors').hidden = !failures.length;
@@ -161,32 +171,37 @@ function renderArchive() {
   }));
 }
 
-function fileWord(count) {
-  if (count % 100 >= 11 && count % 100 <= 14) return 'файлов';
-  if (count % 10 === 1) return 'файл';
-  if (count % 10 >= 2 && count % 10 <= 4) return 'файла';
-  return 'файлов';
+function switchTab(name) {
+  for (const tab of ['events', 'files']) {
+    const active = tab === name;
+    $(tab + '-tab').setAttribute('aria-selected', String(active));
+    $(tab + '-tab').tabIndex = active ? 0 : -1;
+    $(tab + '-panel').hidden = !active;
+  }
 }
 
-function show(result, event = null, autoplay = false) {
+function show(result, event = null) {
   if (job === result) {
     select(event);
     return;
   }
   job = result;
   selected = event;
+  manualTime = null;
+  previewing = false;
+  $('clip-settings').open = false;
   const token = ++revision;
   $('workspace').hidden = false;
   $('workspace').classList.add('has-video');
   $('empty').hidden = true;
   $('filename').textContent = job.path;
   $('filename').title = job.path;
-  $('file-info').textContent = 'Файл ' + (archive.indexOf(job) + 1) + ' · ' + clock(job.duration);
+  $('file-info').textContent = 'Длительность ' + preciseTime(job.duration);
   $('seek').max = job.duration;
   $('seek').value = 0;
   $('ticks').replaceChildren(...Array.from({ length: 5 }, (_, index) => {
     const tick = document.createElement('span');
-    tick.textContent = clock(job.duration * index / 4);
+    tick.textContent = (job.duration < 8 ? preciseTime : clock)(job.duration * index / 4);
     return tick;
   }));
   renderArchive();
@@ -196,24 +211,26 @@ function show(result, event = null, autoplay = false) {
   video.pause();
   video.onloadedmetadata = () => {
     if (token !== revision) return;
-    if (selected) seek(selected.time);
+    if (previewing) seek(selection()[0]);
+    else if (selected) seek(selected.time);
     else sync();
-    if (autoplay) video.play().catch(() => notify('Браузер не смог воспроизвести запись.', true));
   };
   video.src = url;
   thumbnails(url, job.duration, token);
+  renderClip();
   sync(event?.time ?? 0);
 }
 
 function renderEvents() {
-  const rows = archive.flatMap(record => [...record.events].sort((a, b) => a.time - b.time)
+  const focused = archive.flatMap(record => record.events).find(event => event.button === document.activeElement);
+  const rows = archive.flatMap(record => record.events
     .map(event => ({record, event})));
   $('events').replaceChildren();
   $('count').textContent = String(rows.length);
   if (!rows.length) {
     const p = document.createElement('p');
     p.className = 'empty-events';
-    p.textContent = 'Признаков столкновения не найдено. Запись можно проверить вручную.';
+    p.textContent = busy ? 'Идёт поиск эпизодов…' : 'Эпизоды не найдены. Записи доступны во вкладке «Все видео».';
     $('events').append(p);
   }
   for (const {record, event} of rows) {
@@ -221,24 +238,32 @@ function renderEvents() {
     button.className = 'event';
     button.setAttribute('aria-pressed', String(event === selected));
     const time = document.createElement('time');
-    time.textContent = preciseTime(record.offset + event.time);
+    time.textContent = preciseTime(event.time);
     const description = document.createElement('span');
     description.className = 'event-description';
     const name = document.createElement('strong');
-    name.textContent = event.signal;
+    name.textContent = record.path;
+    name.title = record.path;
     const source = document.createElement('span');
-    source.textContent = record.path + ' · ' + preciseTime(event.time);
-    source.title = record.path;
+    source.textContent = event.signal;
     description.append(name, source);
-    const arrow = document.createElement('span');
-    arrow.textContent = '›';
-    arrow.className = 'chevron';
-    arrow.setAttribute('aria-hidden', 'true');
-    button.append(time, description, arrow);
-    button.onclick = () => show(record, event);
+    const still = document.createElement('span');
+    still.className = 'event-still';
+    still.setAttribute('aria-hidden', 'true');
+    const img = document.createElement('img');
+    img.alt = '';
+    if (event.still) img.src = event.still;
+    still.append(img);
+    event.image = img;
+    button.append(still, description, time);
+    button.onclick = () => {
+      userNavigated = true;
+      show(record, event);
+    };
     event.button = button;
     $('events').append(button);
   }
+  focused?.button?.focus({preventScroll: true});
 }
 
 function renderMarkers() {
@@ -249,7 +274,7 @@ function renderMarkers() {
     marker.style.left = item.time / job.duration * 100 + '%';
     marker.title = preciseTime(item.time) + ' · ' + item.signal;
     marker.setAttribute('aria-label', marker.title);
-    marker.onclick = () => select(item);
+    marker.onclick = () => { userNavigated = true; select(item); };
     $('markers').append(marker);
   }
 }
@@ -257,40 +282,66 @@ function renderMarkers() {
 function select(item) {
   selected?.button?.setAttribute('aria-pressed', 'false');
   selected = item;
+  manualTime = null;
+  previewing = false;
   selected?.button?.setAttribute('aria-pressed', 'true');
   video.pause();
   if (item) seek(item.time);
   else sync();
+  renderClip();
 }
 
 function seek(seconds, manual = false) {
   if (!job || !Number.isFinite(video.duration)) return;
-  if (manual && selected) {
-    selected.button.setAttribute('aria-pressed', 'false');
-    selected = null;
+  if (manual) {
+    userNavigated = true;
+    if (previewing) video.pause();
+    previewing = false;
+    renderClip();
   }
   video.currentTime = Math.max(0, Math.min(video.duration, seconds));
   sync(video.currentTime);
 }
 
-function selection(seconds) {
-  const anchor = selected?.time ?? Math.min(job.duration, Math.max(0, seconds));
+function selection() {
+  const anchor = selected?.time ?? manualTime;
+  if (anchor == null) return null;
   const before = Math.min(60, Math.max(0, Number($('before').value) || 0));
   const after = Math.min(60, Math.max(1, Number($('after').value) || 1));
   const end = Math.min(job.duration, anchor + after);
-  return [Math.min(Math.max(0, anchor - before), Math.max(0, end - 1)), end];
+  const start = Math.min(Math.max(0, anchor - before), Math.max(0, end - 1));
+  return [start, end].map(value => Math.round(value * 1000) / 1000);
+}
+
+function renderClip() {
+  if (!job) return;
+  const range = selection();
+  const anchor = selected?.time ?? manualTime;
+  $('clip-actions').hidden = $('clip-settings').hidden = $('clip-range').hidden = $('range-key').hidden = !range;
+  $('mark-key').hidden = !job.events.length;
+  $('manual').hidden = !!range;
+  $('export').disabled = exporting;
+  $('export-label').textContent = exporting ? 'Сохраняем…' : selected && selected.status !== 'visible_consequences' ? 'Скачать фрагмент ДТП' : 'Скачать фрагмент';
+  $('preview-clip').textContent = previewing ? 'Остановить просмотр' : 'Смотреть фрагмент';
+  if (!range) {
+    $('clip-title').textContent = 'В этом видео нет отметок';
+    $('range-label').textContent = 'Можно посмотреть запись и отметить момент вручную.';
+    return;
+  }
+  const [start, end] = range;
+  const title = selected?.signal ?? 'Ваш момент';
+  $('clip-title').textContent = title + ' · ' + preciseTime(anchor);
+  $('range-label').textContent = 'Фрагмент ' + preciseTime(start) + ' – ' + preciseTime(end);
+  $('clip-range').style.left = (start / job.duration * 100) + '%';
+  $('clip-range').style.width = ((end - start) / job.duration * 100) + '%';
 }
 
 function sync(seconds = video.currentTime) {
   if (!job) return;
-  $('clock').textContent = clock(seconds) + ' / ' + clock(job.duration);
+  $('clock').textContent = preciseTime(seconds) + ' / ' + preciseTime(job.duration);
   $('needle').style.left = Math.min(100, seconds / job.duration * 100) + '%';
   $('seek').value = seconds;
-  $('seek').setAttribute('aria-valuetext', clock(seconds));
-  const [start, end] = selection(seconds);
-  $('clip-range').style.left = (start / job.duration * 100) + '%';
-  $('clip-range').style.width = ((end - start) / job.duration * 100) + '%';
-  $('range-label').textContent = clock(start) + ' — ' + clock(end) + ' · ' + Math.round(end - start) + ' сек.';
+  $('seek').setAttribute('aria-valuetext', preciseTime(seconds));
 }
 
 function mediaEvent(element, type, action) {
@@ -335,6 +386,80 @@ async function thumbnails(url, duration, token) {
   }
 }
 
+async function eventImages(record, run) {
+  if (run !== archiveRun) return;
+  const reader = document.createElement('video');
+  reader.muted = true;
+  try {
+    await mediaEvent(reader, 'loadeddata', () => { reader.src = '/api/jobs/' + record.id + '/video'; });
+    const canvas = document.createElement('canvas');
+    canvas.width = 144;
+    canvas.height = Math.max(1, Math.round(144 * reader.videoHeight / reader.videoWidth));
+    for (const event of record.events) {
+      if (run !== archiveRun) break;
+      const time = Math.min(event.time, Math.max(0, reader.duration - .05));
+      if (Math.abs(reader.currentTime - time) > .001) {
+        await mediaEvent(reader, 'seeked', () => { reader.currentTime = time; });
+      }
+      canvas.getContext('2d').drawImage(reader, 0, 0, canvas.width, canvas.height);
+      event.still = canvas.toDataURL('image/jpeg', .78);
+      if (event.image) event.image.src = event.still;
+    }
+  } catch {
+    // Local timestamps and exports remain available if a thumbnail cannot be decoded.
+  } finally {
+    reader.removeAttribute('src');
+    reader.load();
+  }
+}
+
+for (const tab of ['events', 'files']) {
+  const button = $(tab + '-tab');
+  button.onclick = () => switchTab(tab);
+  button.onkeydown = event => {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const next = event.key === 'Home' ? 'events' : event.key === 'End' ? 'files' : tab === 'files' ? 'events' : 'files';
+    switchTab(next);
+    $(next + '-tab').focus();
+  };
+}
+
+function markCursor() {
+  if (!job || !Number.isFinite(video.duration)) return;
+  userNavigated = true;
+  video.pause();
+  previewing = false;
+  selected?.button?.setAttribute('aria-pressed', 'false');
+  selected = null;
+  manualTime = Math.min(job.duration, Math.max(0, video.currentTime));
+  $('clip-settings').open = false;
+  renderClip();
+  $('preview-clip').focus();
+}
+$('manual').onclick = $('use-cursor').onclick = markCursor;
+
+$('preview-clip').onclick = async () => {
+  if (!job || !selection()) return;
+  userNavigated = true;
+  if (previewing) {
+    video.pause();
+    previewing = false;
+    renderClip();
+    return;
+  }
+  previewing = true;
+  renderClip();
+  seek(selection()[0]);
+  const token = revision;
+  try { await video.play(); } catch (error) {
+    if (token !== revision || error.name === 'AbortError') return;
+    previewing = false;
+    renderClip();
+    notify('Браузер не смог воспроизвести фрагмент.', true);
+  }
+};
+
 $('upload').onclick = () => $('file').click();
 $('demo').onclick = () => start();
 $('open-folder').onclick = () => $('folder').click();
@@ -362,24 +487,41 @@ document.addEventListener('drop', event => {
   start(event.dataTransfer.files);
 });
 $('seek').oninput = () => seek(Number($('seek').value), true);
-$('play').onclick = () => video.paused ? video.play().catch(() => notify('Браузер не смог воспроизвести запись.', true)) : video.pause();
+$('play').onclick = () => {
+  userNavigated = true;
+  if (video.paused) video.play().catch(() => notify('Браузер не смог воспроизвести запись.', true));
+  else video.pause();
+};
 $('back').onclick = () => seek(video.currentTime - 5, true);
 $('forward').onclick = () => seek(video.currentTime + 5, true);
 $('mute').onclick = () => { video.muted = !video.muted; };
 $('full').onclick = () => video.requestFullscreen?.().catch(() => notify('Полноэкранный режим недоступен.', true));
 video.onplay = () => icon('play', 'pause', 'Пауза');
-video.onpause = () => icon('play', 'play', 'Воспроизвести');
-video.onended = () => {
-  video.onpause();
-  const next = job && archive[archive.indexOf(job) + 1];
-  if (next) show(next, null, true);
+video.onpause = () => {
+  icon('play', 'play', 'Воспроизвести');
+  if (video.paused && previewing) {
+    previewing = false;
+    renderClip();
+  }
 };
 video.onvolumechange = () => icon('mute', video.muted ? 'muted' : 'sound', video.muted ? 'Включить звук' : 'Выключить звук');
-video.ontimeupdate = () => sync();
+video.ontimeupdate = () => {
+  if (previewing && video.currentTime >= selection()[1]) {
+    const end = selection()[1];
+    previewing = false;
+    video.pause();
+    seek(end);
+    renderClip();
+  }
+  sync();
+};
 video.onerror = () => { if (job) notify('Не удалось воспроизвести запись.', true); };
 icon('play', 'play', 'Воспроизвести');
 icon('mute', 'sound', 'Выключить звук');
-for (const id of ['before', 'after']) $(id).oninput = () => sync();
+for (const id of ['before', 'after']) $(id).oninput = () => {
+  if (previewing) video.pause();
+  renderClip();
+};
 function updateMode() {
   const mode = $('mode').value;
   $('mode-hint').textContent = mode === 'codex'
@@ -398,29 +540,27 @@ if (['motion','ru','codex'].includes(preferredMode)) $('mode').value = preferred
 updateMode();
 
 $('export').onclick = async () => {
-  if (!job || exporting) return;
+  if (!job || exporting || !selection()) return;
+  const source = job;
+  const anchor = selected?.time ?? manualTime;
+  const [start, end] = selection();
+  const kind = selected ? (selected.status === 'visible_consequences' ? 'последствия' : 'ДТП') : 'фрагмент';
   exporting = true;
-  const button = $('export');
-  const original = button.innerHTML;
-  button.disabled = true;
-  button.textContent = 'Готовим отрывок…';
+  renderClip();
   notify('');
   try {
-    const source = job;
-    const [start, end] = selection(video.currentTime);
     const response = await fetch('/api/jobs/' + source.id + '/clip?' + new URLSearchParams({ start, end }));
     if (!response.ok) await json(response);
     const url = URL.createObjectURL(await response.blob());
     const link = document.createElement('a');
     link.href = url;
-    link.download = source.name.replace(/\.[^.]+$/, '') + '-' + clock(start).replaceAll(':', '-') + '.mp4';
+    link.download = source.name.replace(/\.[^.]+$/, '') + '-' + kind + '-' + preciseTime(anchor).replaceAll(':', '-') + '.mp4';
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 30000);
   } catch (error) {
     notify(error.message, true);
   } finally {
-    button.innerHTML = original;
-    button.disabled = false;
     exporting = false;
+    renderClip();
   }
 };

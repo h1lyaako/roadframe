@@ -13,7 +13,7 @@
     <header class="heading">
       <div class="brand">
         <svg width="29" height="29" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M12 5H5v7m15-7h7v7M5 20v7h7m15-7v7h-7M16 8v4m0 4v3m0 4v2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <div><h1>Дорожный кадр</h1><p id="subtitle">Архив регистратора</p></div>
+        <div><h1>Дорожный кадр</h1><p id="subtitle">Поиск ДТП на видео</p></div>
       </div>
       <div class="actions">
         <button id="demo" class="secondary">Пример ДТП</button>
@@ -32,20 +32,28 @@
       </select>
       <span id="mode-hint">Обработка на компьютере</span>
     </div>
-    <div id="progress-box" class="progress-box" hidden><span id="progress-label"></span><progress id="progress" max="100" aria-label="Ход анализа архива"></progress></div>
+    <div id="progress-box" class="progress-box" hidden><div class="progress-meta"><span id="progress-label"></span><time id="elapsed"></time></div><progress id="progress" max="100" aria-label="Ход анализа архива"></progress></div>
     <p id="notice" class="notice" role="status" hidden></p>
     <section id="empty" class="empty">
       <svg width="46" height="46" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5" y="10" width="38" height="28" rx="3"/><path d="m20 17 11 7-11 7z"/></svg>
       <h2>Откройте папку с регистратора</h2><p>Или перетащите сюда записи в MP4, MOV, WebM, MKV или AVI.</p>
     </section>
     <div id="workspace" class="workspace" hidden>
-    <section id="archive" class="archive" aria-label="Записи в архиве" hidden>
-      <div class="archive-head"><h2 id="archive-name">Записи</h2><span id="archive-info"></span></div>
-      <div id="files" class="files"></div>
+    <section id="archive" class="archive" aria-label="Результаты поиска" hidden>
+      <div class="archive-head"><h2>Результаты поиска</h2><span id="archive-info"></span></div>
+      <div class="switcher" role="tablist" aria-label="Что показать">
+        <button id="events-tab" role="tab" aria-controls="events-panel" aria-selected="true">Эпизоды <span id="count">0</span></button>
+        <button id="files-tab" role="tab" aria-controls="files-panel" aria-selected="false" tabindex="-1">Все видео <span id="file-count">0</span></button>
+      </div>
+      <div id="events-panel" role="tabpanel" aria-labelledby="events-tab">
+        <p class="list-caption">Время от начала каждого видео</p>
+        <div id="events" class="events"></div>
+      </div>
+      <div id="files-panel" role="tabpanel" aria-labelledby="files-tab" hidden><div id="files" class="files"></div></div>
       <details id="file-errors" hidden><summary id="error-count"></summary><ul id="error-list"></ul></details>
     </section>
       <section class="viewer" aria-label="Просмотр записи">
-        <div class="filebar"><span class="filename" id="filename"></span><span id="file-info"></span></div>
+        <div class="filebar"><h2 class="filename" id="filename"></h2><span id="file-info"></span></div>
         <div class="screen"><video id="video" playsinline preload="metadata" aria-label="Запись регистратора"></video></div>
         <div class="transport">
           <span class="time" id="clock"></span>
@@ -59,8 +67,23 @@
           </div>
         </div>
       </section>
-      <section class="timeline" aria-label="Шкала файла">
-        <div class="timeline-head"><h2>Шкала файла</h2><div class="timeline-legend"><span><i class="range-key"></i> Отрывок</span><span><i class="marker-key"></i> Отметка</span></div></div>
+      <section class="review" aria-labelledby="clip-title">
+        <div class="clip-summary"><h2 id="clip-title"></h2><p id="range-label" class="range-label"></p></div>
+        <div id="clip-actions" class="clip-actions" hidden>
+          <button id="preview-clip" class="secondary outlined">Смотреть фрагмент</button>
+          <button id="export" class="primary"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 4v12m-5-5 5 5 5-5M4 17v3h16v-3"/></svg><span id="export-label">Скачать фрагмент ДТП</span></button>
+        </div>
+        <button id="manual" class="secondary outlined" hidden>Выбрать момент вручную</button>
+        <details id="clip-settings" hidden><summary>Настроить границы</summary>
+          <div class="limits">
+            <label>До отметки, сек.<input id="before" type="number" min="0" max="60" value="3"></label>
+            <label>После отметки, сек.<input id="after" type="number" min="1" max="60" value="4"></label>
+          </div>
+          <button id="use-cursor" class="secondary outlined">Выбрать момент в плеере</button>
+        </details>
+      </section>
+      <section class="timeline" aria-label="Шкала видео">
+        <div class="timeline-head"><h2>Шкала видео</h2><div class="timeline-legend"><span id="range-key"><i class="range-key"></i> Фрагмент</span><span id="mark-key"><i class="marker-key"></i> Отметка</span></div></div>
         <div class="ticks" id="ticks" aria-hidden="true"></div>
         <div class="film" id="film">
           <div id="frames" class="frames" aria-hidden="true"></div>
@@ -69,19 +92,6 @@
           <div id="markers" class="markers"></div><div id="needle" class="needle"></div>
         </div>
       </section>
-      <aside class="review">
-        <div class="review-head"><h2>Возможные столкновения</h2><span id="count" aria-label="Количество отметок"></span></div>
-        <div id="events" class="events"></div>
-        <div class="export">
-          <h2>Сохранить отрывок</h2>
-          <p id="range-label" class="range-label"></p>
-          <div class="limits">
-            <label>До момента, сек.<input id="before" type="number" min="0" max="60" value="8"></label>
-            <label>После момента, сек.<input id="after" type="number" min="1" max="60" value="12"></label>
-          </div>
-          <button id="export" class="secondary export-button"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 4v12m-5-5 5 5 5-5M4 17v3h16v-3"/></svg> Скачать MP4</button>
-        </div>
-      </aside>
     </div>
     </div>
     <footer><span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> <span id="processing-place">Дорожный кадр</span></span><span id="credit" hidden>Исходники: <a href="https://t.me/russiancrash/7941" target="_blank" rel="noopener">Санкт-Петербург</a> · <a href="https://commons.wikimedia.org/wiki/File:Трёхгорный,_авария_на_перекрёстке_Калинина_и_Островского_2019-02-02.webm" target="_blank" rel="noopener">Трёхгорный</a></span></footer>
