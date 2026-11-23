@@ -274,7 +274,7 @@ def review(path, duration, progress):
     ensure_model()
     events = []
     checked = []
-    motion_times = []
+    motion_events = []
     view = "unknown"
     for start in range(0, math.ceil(duration), 14):
         dense = samples(path, start, min(16, duration - start), 5, 640, 360)
@@ -294,7 +294,7 @@ def review(path, duration, progress):
             )["view"]
             if view == "dashboard":
                 progress("Ищем резкие изменения движения", 0)
-                motion_times = [e["time"] for e in analyze(path, duration)]
+                motion_events = analyze(path, duration)
         scan = ask(
             sheet(road_view(frames)),
             SCAN,
@@ -306,7 +306,8 @@ def review(path, duration, progress):
             ),
             100,
         )
-        proposals = [(t, None) for t in motion_times if start <= t < start + 16]
+        proposals = [(e["time"], None) for e in motion_events
+                     if e.get("status") != "audiovisual_candidate" and start <= e["time"] < start + 16]
         proposals.extend((frames[i - 1][0], None) for i in sorted(set(scan["frames"])))
         for score, t, (x, y), size in (encounters(dense, vehicle_tracks=True) if view != "dashboard" else []):
             if score >= 0.12 and 0.06 < x < 0.94 and 0.10 < y < 0.90:
@@ -333,4 +334,8 @@ def review(path, duration, progress):
                 events.append(event)
         if start + 16 >= duration:
             break
+    # Keep the source of a cross-modal cue explicit if the model can't verify contact.
+    for cue in motion_events:
+        if cue.get("status") == "audiovisual_candidate" and all(abs(cue["time"] - e["time"]) >= 2 for e in events):
+            events.append(cue)
     return sorted(events, key=lambda e: e["time"]), round(time.monotonic() - started, 2)

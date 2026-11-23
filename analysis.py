@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 from encounters import roadside_events
+from impact_audio import impact_sounds
 
 WIDTH, HEIGHT, FPS = 256, 144, 5
 MAX_DURATION = 3600
@@ -323,14 +324,49 @@ def collision_candidates(fields, camera_jerks, background_motion, texture):
     return [event for _, event in sorted(events, key=lambda item: -item[0])[:12]]
 
 
+def audiovisual_candidates(fields, background_motion, times):
+    if not len(times):
+        return []
+    # Measure small, local changes above the hood. Compare each cell to its
+    # own recent activity so a distant disturbance need not shake the camera.
+    road = fields[:, :4, 2:10]
+    speed = np.linalg.norm(road, axis=-1)
+    change = np.linalg.norm(np.diff(road, axis=0, prepend=road[:1]), axis=-1)
+    energy = np.sqrt(speed * change)
+    smooth = energy.copy()
+    smooth[2:] = (energy[2:] + energy[1:-1] + energy[:-2]) / 3
+    events = []
+    for sound in times:
+        lo = max(0, math.ceil((sound - .8) * IMPACT_FPS) - 1)
+        hi = min(len(smooth), math.floor((sound + .4) * IMPACT_FPS))
+        if lo < 5 or hi - lo < 2:
+            continue
+        baseline = np.median(smooth[max(0, lo - 2 * IMPACT_FPS):lo], axis=0)
+        scene = smooth[lo:hi]
+        # A pan or camera turn can move the whole picture at an acoustic onset.
+        floor = np.maximum(.8, background_motion[lo:hi] * .5)
+        active = (scene >= 2 * baseline) & (scene >= floor[:, None, None])
+        sustained = (active[1:] & active[:-1]).any(axis=(1, 2))
+        indices = np.flatnonzero(sustained)
+        if len(indices):
+            first = (lo + int(indices[0]) + 1) / IMPACT_FPS
+            events.append({"time": round(first, 2), "status": "audiovisual_candidate",
+                           "signal": "Возможное ДТП по звуку и движению"})
+    return events
+
+
 def analyze(path, duration, update=lambda fraction: None):
     fields = motion_fields(path, duration, lambda fraction: update(.8 * fraction))
     events = collision_candidates(*fields)
     # A genuinely fixed frame permits tracking vehicles against a stable background.
     # A stopped dashcam with engine vibration usually exceeds this noise floor.
     if np.quantile(fields[2], .75) < .05:
-        for candidate in roadside_events(path, duration, lambda fraction: update(.8 + .2 * fraction)):
+        for candidate in roadside_events(path, duration, lambda fraction: update(.8 + .15 * fraction)):
             if all(abs(candidate["time"] - e["time"]) >= 2 for e in events):
                 events.append(candidate)
+    update(.95)
+    for candidate in audiovisual_candidates(fields[0], fields[2], impact_sounds(path, duration)):
+        if all(abs(candidate["time"] - event["time"]) >= 2 for event in events):
+            events.append(candidate)
     update(1)
     return sorted(events, key=lambda event: event["time"])
